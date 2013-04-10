@@ -71,7 +71,7 @@ def getList( server ):
         folder = Folder( f[2], f[1] )
         if folder == '[Gmail]':
             continue
-        fList.append( ( folder, server.select( folder.imapRepr() )[1][0] ) )
+        fList.append( ( folder, server.select( folder.imapRepr(), True )[1][0] ) )
     return fList
 
 #-------------------------------------------------------------------------------
@@ -130,7 +130,7 @@ def buildCopyList( sourceListing, toCopy, sep ):
 def copyMessages( src, dest, srcMbox, destMbox ):
     print "Copying %s => %s" % (srcMbox, destMbox)
 
-    src.select( srcMbox.imapRepr() )
+    src.select( srcMbox.imapRepr(), True )
     st, m = dest.create( destMbox.imapRepr() )
 
     if st != 'OK':
