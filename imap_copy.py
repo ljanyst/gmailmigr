@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #-------------------------------------------------------------------------------
-# Copyright (c) 2012, Lukasz Janyst <ljanyst@buggybrain.net>
+# Copyright (c) 2012-2014, Lukasz Janyst <ljanyst@buggybrain.net>
 #
 # Permission to use, copy, modify, and/or distribute this software for any
 # purpose with or without fee is hereby granted, provided that the above
@@ -19,6 +19,9 @@ import getopt
 import getpass
 import imaplib
 import sys
+import tempfile
+import pickle
+import os
 
 #-------------------------------------------------------------------------------
 # Some helpers
@@ -40,6 +43,23 @@ class Folder:
     def imapRepr( self ):
         return self.separator.join( self.__path )
 
+class ImapConnectionWrapper:
+    def __init__( self, host, port, username, password ):
+        self.__host     = host
+        self.__port     = port
+        self.__username = username
+        self.__password = password
+        self.imap       = None
+        self.connect()
+
+    def connect(self):
+        self.imap = imaplib.IMAP4_SSL( self.__host, self.__port )
+        self.imap.login(self.__username, self.__password )
+
+    def disconnect(self):
+        self.imap.logout()
+        self.imap = None
+
 #-------------------------------------------------------------------------------
 # Get IMAP connection
 #-------------------------------------------------------------------------------
@@ -56,8 +76,7 @@ def getIMAPConnection( hostPort ):
     user   = getpass.getpass( l[0] + '\'s username (won\'t be echoed): ')
     passwd = getpass.getpass( l[0] + '\'s password (won\'t be echoed): ')
 
-    m = imaplib.IMAP4_SSL( l[0], port )
-    m.login( user, passwd )
+    m = ImapConnectionWrapper(l[0], port, user, passwd)
     return m
 
 #-------------------------------------------------------------------------------
@@ -91,7 +110,7 @@ def list( opts ):
         raise Exception( 'Source server is missing' )
 
     conn = getIMAPConnection( opts['--source'] )
-    folders = getList( conn )
+    folders = getList( conn.imap )
     for folder in folders:
         print "%s (%s)" % (folder[0], folder[1] )
     conn.logout()
@@ -130,24 +149,46 @@ def buildCopyList( sourceListing, toCopy, sep ):
 def copyMessages( src, dest, srcMbox, destMbox ):
     print "Copying %s => %s" % (srcMbox, destMbox)
 
-    src.select( srcMbox.imapRepr(), True )
-    st, m = dest.create( destMbox.imapRepr() )
+    src.disconnect()
+    src.connect() # make sure we have a valid connection
+    st, m = src.imap.select( srcMbox.imapRepr(), True )
 
     if st != 'OK':
-        raise Exception( "Unable to create destination folder: " + str(m) )
+        raise Exception( "Unable to select source folder: " + str(m) )
 
-    st, data = src.search( None, 'ALL' )
+    dest.disconnect()
+
+    st, data = src.imap.search( None, 'ALL' )
     msgs = data[0].split()
     numMsgs = len( msgs )
     currMsg = 1
 
+    tmpDir = tempfile.mkdtemp(prefix=srcMbox.imapRepr()+'-')
+
     for num in msgs:
-        print "\rCopying", currMsg, "of", numMsgs,
-        currMsg += 1
+        print "\rDownloading", currMsg, "of", numMsgs,
         sys.stdout.flush()
-        st, data = src.fetch( num, '(RFC822)' )
-        dest.append( destMbox.imapRepr(), None, None, data[0][1] )
-    print ''
+        st, data = src.imap.fetch( num, '(RFC822)' )
+        pickle.dump( data[0][1], open(tmpDir+'/'+str(currMsg)+'.p', 'w') )
+        currMsg += 1
+    print 'DONE.'
+
+    dest.connect()
+    st, m = dest.imap.create( destMbox.imapRepr() )
+
+    if st != 'OK':
+        raise Exception( "Unable to create destination folder: " + str(m) )
+
+    currMsg = 1
+    for num in msgs:
+        print "\rUploading", currMsg, "of", numMsgs,
+        sys.stdout.flush()
+        filePath = tmpDir+'/'+str(currMsg)+'.p'
+        data = pickle.load( open(filePath, 'r') )
+        dest.imap.append( destMbox.imapRepr(), None, None, data )
+        os.remove(filePath)
+        currMsg += 1
+    print 'DONE.'
 
 #-------------------------------------------------------------------------------
 # List the IMAP folders on the destination
@@ -186,8 +227,8 @@ def copy( opts ):
     for job in copyList:
         copyMessages( src, dest, job[0], job[1] )
     print "ALL DONE"
-    dest.logout()
-    src.logout()
+    dest.disconnect()
+    src.disconnect()
 
     return 0
 
