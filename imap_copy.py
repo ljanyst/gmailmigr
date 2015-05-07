@@ -119,11 +119,11 @@ def list( opts ):
 #-------------------------------------------------------------------------------
 # Build copy list out of source folder list and copy string
 #-------------------------------------------------------------------------------
-def buildCopyList( sourceListing, toCopy, sep ):
+def buildCopyList( sourceListing, toCopy, srcSep, destSep ):
     copyList = []
     skipped  = []
     if toCopy == '*':
-        return ([(f, Folder( str(f) ) ) for f in sourceListing], [])
+        return ([(f, Folder( str(f), srcSep ) ) for f in sourceListing], [])
 
     toCopy = toCopy.split( ',' )
     for item in toCopy:
@@ -139,8 +139,10 @@ def buildCopyList( sourceListing, toCopy, sep ):
             skipped.append( item )
         else:
             dst = Folder( spl[1] )
-            dst.separator = sep
-            copyList.append( (Folder( spl[0] ), dst ) )
+            src = Folder( spl[0] )
+            dst.separator = destSep
+            src.separator = srcSep
+            copyList.append( (src, dst) )
     return (copyList, skipped)
 
 #-------------------------------------------------------------------------------
@@ -213,10 +215,12 @@ def copy( opts ):
     #---------------------------------------------------------------------------
     src  = getIMAPConnection( opts['--source'] )
     dest = getIMAPConnection( opts['--destination'] )
-    sourceList = [i[0] for i in getList( src )]
-    destSep  = getSeparator( dest )
-    
-    copyList, skipped = buildCopyList( sourceList, folders, destSep )
+    sourceList = [i[0] for i in getList( src.imap )]
+    destSep  = getSeparator( dest.imap )
+    srcSep   = getSeparator( src.imap )
+
+    copyList, skipped = buildCopyList( sourceList, folders, srcSep, destSep )
+
     if skipped:
         print 'The following folders were not found on the source server:',
         print skipped
